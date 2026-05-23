@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-FTP Polaroid Snapshot — Home Assistant Add-on  v1.2.0
+FTP Polaroid Snapshot — Home Assistant Add-on  v1.3.0
 - Polls an FTP server every N minutes (configurable, default 5)
 - Downloads the newest .mov / .MOV file
 - Extracts all frames with ffmpeg
 - Frame count < 4  → single polaroid from the middle frame (25% size)
 - Frame count >= 4 → 2×2 polaroid matrix, one frame per quarter (25% size)
 - 2 px separator between cells in matrix mode
+- Configurable background colour (sheet + polaroid border) and caption text colour
 """
 
 import ftplib
@@ -49,6 +50,24 @@ def load_options() -> dict:
 
 def get_cfg(opts: dict, key: str, default):
     return opts.get(key, os.environ.get(key.upper(), default))
+
+
+def hex_to_rgb(hex_color: str, fallback: tuple) -> tuple:
+    """
+    Parse a CSS hex colour string (#RRGGBB or #RGB) into an (R, G, B) tuple.
+    Returns fallback on any parse error so a bad config value never crashes the add-on.
+    """
+    try:
+        h = hex_color.strip().lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) != 6:
+            raise ValueError(f"unexpected length {len(h)}")
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    except Exception as exc:
+        log.warning("Cannot parse colour '%s' (%s) – using default %s",
+                    hex_color, exc, fallback)
+        return fallback
 
 
 # ──────────────────────────────────────────────
@@ -100,7 +119,7 @@ def ftp_download(ftp: ftplib.FTP, filename: str, local_path: str) -> bool:
 
 
 # ──────────────────────────────────────────────
-# Frame extraction
+# Frame extraction & selection
 # ──────────────────────────────────────────────
 def extract_frames(video_path: str, frames_dir: str) -> list[str]:
     """Dump every frame as PNG via ffmpeg. Returns sorted list of paths."""
@@ -127,8 +146,8 @@ def extract_frames(video_path: str, frames_dir: str) -> list[str]:
 
 def select_frames(frame_paths: list[str]) -> list[str]:
     """
-    < 4 frames → return [middle frame]  (single-image mode)
-    >= 4 frames → return first frame of each of 4 equal groups (matrix mode)
+    < 4 frames → [middle frame]               (single-image mode)
+    >= 4 frames → first frame of each quarter (2×2 matrix mode)
     """
     total = len(frame_paths)
     if total == 0:
@@ -152,12 +171,9 @@ def select_frames(frame_paths: list[str]) -> list[str]:
 # ──────────────────────────────────────────────
 # Polaroid rendering
 # ──────────────────────────────────────────────
-POLAROID_BG         = (255, 255, 255)
-SHEET_BG            = (235, 228, 215)   # warm aged paper (used as separator colour)
-CAPTION_COLOR       = (80, 80, 80)
-SEPARATOR           = 2                 # px between cells in matrix mode
-BORDER_SIDE_RATIO   = 0.04             # fraction of thumb width → left/right/top border
-BORDER_BOTTOM_RATIO = 0.16             # fraction of thumb height → caption strip
+SEPARATOR           = 2     # px between cells in matrix mode
+BORDER_SIDE_RATIO   = 0.04  # fraction of thumb width  → left/right/top border
+BORDER_BOTTOM_RATIO = 0.16  # fraction of thumb height → caption strip
 
 
 def scale_thumb(src: Image.Image) -> Image.Image:
@@ -168,13 +184,18 @@ def scale_thumb(src: Image.Image) -> Image.Image:
     return src.resize((tw, th), Image.LANCZOS)
 
 
-def make_polaroid_cell(thumb: Image.Image, label: str) -> Image.Image:
-    """Wrap a thumb in a white polaroid border with a caption strip."""
+def make_polaroid_cell(
+    thumb: Image.Image,
+    label: str,
+    bg_color: tuple,
+    text_color: tuple,
+) -> Image.Image:
+    """Wrap a thumb in a polaroid border using the given colours."""
     tw, th = thumb.size
     bs = max(4, round(tw * BORDER_SIDE_RATIO))
     bb = max(12, round(th * BORDER_BOTTOM_RATIO))
 
-    cell = Image.new("RGB", (tw + bs * 2, th + bs + bb), POLAROID_BG)
+    cell = Image.new("RGB", (tw + bs * 2, th + bs + bb), bg_color)
     cell.paste(thumb, (bs, bs))
 
     draw = ImageDraw.Draw(cell)
@@ -188,24 +209,34 @@ def make_polaroid_cell(thumb: Image.Image, label: str) -> Image.Image:
     lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text(
         ((cell.width - lw) // 2, th + bs + (bb - lh) // 2),
-        label, fill=CAPTION_COLOR, font=font,
+        label, fill=text_color, font=font,
     )
     return cell
 
 
-def render_single(frame_path: str, timestamp: str) -> Image.Image:
+def render_single(
+    frame_path: str,
+    timestamp: str,
+    bg_color: tuple,
+    text_color: tuple,
+) -> Image.Image:
     """Single-image mode: one polaroid at 25% size."""
     src   = Image.open(frame_path).convert("RGB")
     thumb = scale_thumb(src)
-    label = f"Frame 1  •  {timestamp}"
-    cell  = make_polaroid_cell(thumb, label)
+    cell  = make_polaroid_cell(thumb, f"Frame 1  •  {timestamp}", bg_color, text_color)
     log.info("Single-image output: %dx%d", cell.width, cell.height)
     return cell
 
 
-def render_matrix(frame_paths: list[str], timestamp: str) -> Image.Image:
+def render_matrix(
+    frame_paths: list[str],
+    timestamp: str,
+    bg_color: tuple,
+    text_color: tuple,
+) -> Image.Image:
     """
-    2×2 matrix mode: four polaroid cells separated by SEPARATOR px of SHEET_BG.
+    2×2 matrix: four polaroid cells separated by SEPARATOR px.
+    The separator strip uses bg_color so it blends with the polaroid border.
     Sheet size = 2*cell_w + SEPARATOR  ×  2*cell_h + SEPARATOR  (no outer padding).
     """
     cells = []
@@ -213,15 +244,15 @@ def render_matrix(frame_paths: list[str], timestamp: str) -> Image.Image:
         src   = Image.open(fp).convert("RGB")
         thumb = scale_thumb(src)
         label = f"Frame {i + 1}  •  {timestamp}"
-        cells.append(make_polaroid_cell(thumb, label))
+        cells.append(make_polaroid_cell(thumb, label, bg_color, text_color))
 
-    cw, ch = cells[0].width, cells[0].height
+    cw, ch  = cells[0].width, cells[0].height
     sheet_w = cw * 2 + SEPARATOR
     sheet_h = ch * 2 + SEPARATOR
     log.info("Matrix output: %dx%d  (cell %dx%d, sep %dpx)",
              sheet_w, sheet_h, cw, ch, SEPARATOR)
 
-    sheet = Image.new("RGB", (sheet_w, sheet_h), SHEET_BG)
+    sheet = Image.new("RGB", (sheet_w, sheet_h), bg_color)
     for cell, (x, y) in zip(cells, [
         (0,              0),
         (cw + SEPARATOR, 0),
@@ -233,11 +264,16 @@ def render_matrix(frame_paths: list[str], timestamp: str) -> Image.Image:
     return sheet
 
 
-def build_output(frame_paths: list[str], timestamp: str) -> Image.Image:
+def build_output(
+    frame_paths: list[str],
+    timestamp: str,
+    bg_color: tuple,
+    text_color: tuple,
+) -> Image.Image:
     """Dispatch to single or matrix renderer based on frame count."""
     if len(frame_paths) == 1:
-        return render_single(frame_paths[0], timestamp)
-    return render_matrix(frame_paths, timestamp)
+        return render_single(frame_paths[0], timestamp, bg_color, text_color)
+    return render_matrix(frame_paths, timestamp, bg_color, text_color)
 
 
 # ──────────────────────────────────────────────
@@ -250,6 +286,18 @@ def process(opts: dict):
     password    = get_cfg(opts, "ftp_password",    "")
     remote_path = get_cfg(opts, "ftp_path",        "/")
     output_dir  = get_cfg(opts, "output_dir",      "/media/polaroid")
+
+    bg_color   = hex_to_rgb(
+        get_cfg(opts, "background_color", "#FFFFFF"),
+        fallback=(255, 255, 255),
+    )
+    text_color = hex_to_rgb(
+        get_cfg(opts, "text_color", "#505050"),
+        fallback=(80, 80, 80),
+    )
+
+    log.info("Colours — background: #%02X%02X%02X  text: #%02X%02X%02X",
+             *bg_color, *text_color)
 
     if not host:
         log.error("ftp_host is not configured – skipping run")
@@ -293,7 +341,7 @@ def process(opts: dict):
                      mode, len(chosen), len(all_frames))
 
             ts     = datetime.now().strftime("%Y-%m-%d %H:%M")
-            output = build_output(chosen, ts)
+            output = build_output(chosen, ts, bg_color, text_color)
 
             safe_name = datetime.now().strftime("%Y%m%d_%H%M%S")
             out_path  = os.path.join(output_dir, f"polaroid_{safe_name}.jpg")
@@ -320,7 +368,7 @@ def main():
     interval = int(get_cfg(opts, "interval_minutes", 5)) * 60
 
     log.info("════════════════════════════════════════")
-    log.info("  FTP Polaroid Snapshot  v1.2.0")
+    log.info("  FTP Polaroid Snapshot  v1.3.0")
     log.info("  Check interval : %d min (%d s)", interval // 60, interval)
     log.info("════════════════════════════════════════")
 
