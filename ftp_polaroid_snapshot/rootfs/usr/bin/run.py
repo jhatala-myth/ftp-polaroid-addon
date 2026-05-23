@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FTP Polaroid Snapshot — Home Assistant Add-on  v1.5.0
+FTP Polaroid Snapshot — Home Assistant Add-on  v1.6.0
 
 Every N minutes (configurable):
   • Downloads the newest .mov from FTP
@@ -183,66 +183,45 @@ def select_frames(frame_paths: list[str]) -> list[str]:
 
 
 # ──────────────────────────────────────────────
-# Timestamp overlay
-# ──────────────────────────────────────────────
-TIMESTAMP_FMT = "%Y-%m-%d  %H:%M:%S UTC"
-OVERLAY_BG    = (0, 0, 0, 170)   # RGBA – semi-transparent dark box
-OVERLAY_TEXT  = (255, 255, 255)  # always white for legibility
-
-
-def burn_timestamp(img: Image.Image, ts_text: str) -> Image.Image:
-    """Composite a timestamp box in the bottom-right corner of img."""
-    rgba = img.convert("RGBA")
-    w, h = rgba.size
-
-    font_size = max(12, round(w * 0.025))
-    try:
-        font = ImageFont.truetype(
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf", font_size)
-    except (IOError, OSError):
-        font = ImageFont.load_default()
-
-    tmp_draw = ImageDraw.Draw(rgba)
-    bbox = tmp_draw.textbbox((0, 0), ts_text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    pad    = max(5, round(font_size * 0.45))
-    margin = max(8, round(w * 0.01))
-    box_w  = tw + pad * 2
-    box_h  = th + pad * 2
-    bx     = w - box_w - margin
-    by     = h - box_h - margin
-
-    overlay = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
-    ImageDraw.Draw(overlay).rectangle(
-        [bx, by, bx + box_w, by + box_h], fill=OVERLAY_BG)
-    rgba = Image.alpha_composite(rgba, overlay)
-
-    ImageDraw.Draw(rgba).text(
-        (bx + pad, by + pad), ts_text, fill=OVERLAY_TEXT, font=font)
-
-    return rgba.convert("RGB")
-
-
-# ──────────────────────────────────────────────
 # Polaroid rendering
 # ──────────────────────────────────────────────
+TIMESTAMP_FMT       = "%Y-%m-%d  %H:%M:%S UTC"
 SEPARATOR           = 2      # px between matrix cells
-BORDER_SIDE_RATIO   = 0.04   # left / right / top border as fraction of cell width
-BORDER_BOTTOM_RATIO = 0.13   # bottom caption strip (timestamp only)
+BORDER_SIDE_RATIO   = 0.04   # left / right / top border as fraction of photo width
+BORDER_BOTTOM_RATIO = 0.13   # bottom caption strip height as fraction of photo height
 
 
 def make_polaroid_cell(
-    photo: Image.Image,         # already at its final pixel size
+    photo: Image.Image,
+    ts_text: str,
     bg_color: tuple,
+    text_color: tuple,
 ) -> Image.Image:
-    """Wrap photo in a polaroid border. No caption text — timestamp is on photo."""
+    """
+    Wrap photo in a polaroid border.
+    The timestamp is printed centred in the white bottom strip — no frame numbers.
+    """
     pw, ph = photo.size
     bs = max(4, round(pw * BORDER_SIDE_RATIO))
     bb = max(10, round(ph * BORDER_BOTTOM_RATIO))
 
     cell = Image.new("RGB", (pw + bs * 2, ph + bs + bb), bg_color)
     cell.paste(photo, (bs, bs))
+
+    draw = ImageDraw.Draw(cell)
+    font_size = max(8, round(pw * 0.038))
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf", font_size)
+    except (IOError, OSError):
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), ts_text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(
+        ((cell.width - tw) // 2, ph + bs + (bb - th) // 2),
+        ts_text, fill=text_color, font=font,
+    )
     return cell
 
 
@@ -250,15 +229,12 @@ def render_single(
     frame_path: str,
     ts_text: str,
     bg_color: tuple,
+    text_color: tuple,
 ) -> Image.Image:
-    """
-    Single-image mode.
-    Photo is kept at FULL original resolution; only timestamp overlay added.
-    """
-    src   = Image.open(frame_path).convert("RGB")
+    """Single-image mode: full original resolution, timestamp in bottom strip."""
+    src = Image.open(frame_path).convert("RGB")
     orig_w, orig_h = src.size
-    photo = burn_timestamp(src, ts_text)
-    cell  = make_polaroid_cell(photo, bg_color)
+    cell = make_polaroid_cell(src, ts_text, bg_color, text_color)
     log.info("Single mode: original %dx%d → output %dx%d",
              orig_w, orig_h, cell.width, cell.height)
     return cell
@@ -268,14 +244,14 @@ def render_matrix(
     frame_paths: list[str],
     ts_text: str,
     bg_color: tuple,
+    text_color: tuple,
 ) -> Image.Image:
     """
     2×2 matrix mode.
-    Each cell is 25% of original resolution.
-    The sheet is then scaled UP so its total size equals the original video size.
-    Output pixel dimensions match the source video exactly.
+    Each cell is 25% of original resolution, assembled into a sheet,
+    then the sheet is upscaled back to the original video resolution.
+    Timestamp shown in the bottom strip of each cell — no frame numbers.
     """
-    # All four frames must share the same original resolution (same video)
     first_src = Image.open(frame_paths[0]).convert("RGB")
     orig_w, orig_h = first_src.size
 
@@ -285,11 +261,10 @@ def render_matrix(
              orig_w, orig_h, thumb_w, thumb_h)
 
     cells = []
-    for i, fp in enumerate(frame_paths):
+    for fp in frame_paths:
         src   = Image.open(fp).convert("RGB")
         thumb = src.resize((thumb_w, thumb_h), Image.LANCZOS)
-        thumb = burn_timestamp(thumb, ts_text)
-        cell  = make_polaroid_cell(thumb, bg_color)
+        cell  = make_polaroid_cell(thumb, ts_text, bg_color, text_color)
         cells.append(cell)
 
     cw, ch  = cells[0].width, cells[0].height
@@ -317,10 +292,11 @@ def build_output(
     frame_paths: list[str],
     ts_text: str,
     bg_color: tuple,
+    text_color: tuple,
 ) -> Image.Image:
     if len(frame_paths) == 1:
-        return render_single(frame_paths[0], ts_text, bg_color)
-    return render_matrix(frame_paths, ts_text, bg_color)
+        return render_single(frame_paths[0], ts_text, bg_color, text_color)
+    return render_matrix(frame_paths, ts_text, bg_color, text_color)
 
 
 # ──────────────────────────────────────────────
@@ -473,6 +449,8 @@ def process(opts: dict):
 
     bg_color = hex_to_rgb(
         get_cfg(opts, "background_color", "#FFFFFF"), fallback=(255, 255, 255))
+    text_color = hex_to_rgb(
+        get_cfg(opts, "text_color", "#505050"), fallback=(80, 80, 80))
 
     if not host:
         log.error("ftp_host is not configured – skipping run")
@@ -524,7 +502,7 @@ def process(opts: dict):
             log.info("Mode: %s (%d selected from %d total frames)",
                      mode, len(chosen), len(all_frames))
 
-            output = build_output(chosen, ts_text, bg_color)
+            output = build_output(chosen, ts_text, bg_color, text_color)
 
             # ── Date-structured save ──
             photo_folder = day_dir(output_dir, save_dt)
@@ -558,7 +536,7 @@ def main():
     output_dir         = get_cfg(opts, "output_dir", "/media/polaroid")
 
     log.info("════════════════════════════════════════")
-    log.info("  FTP Polaroid Snapshot  v1.5.0")
+    log.info("  FTP Polaroid Snapshot  v1.6.0")
     log.info("  Check interval  : %d min", interval // 60)
     log.info("  Photo retention : %d days", keep_photos_days)
     log.info("  Lapse retention : %d days", keep_timelapse_days)

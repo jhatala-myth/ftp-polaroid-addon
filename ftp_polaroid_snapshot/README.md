@@ -1,6 +1,6 @@
 # FTP Polaroid Snapshot — Home Assistant Add-on
 
-**v1.5.0**
+**v1.6.0**
 
 Polls an FTP server on a configurable schedule, downloads the newest `.mov`
 file, renders a polaroid-style snapshot with a burned-in MOV timestamp, and
@@ -62,8 +62,8 @@ Timelapse files are named `YYYY-MM-DD-timelapse.mp4` (yesterday's date).
 - Single mode: photo is at **100% of original video resolution**
 - Matrix mode: each of 4 cells is 25% → assembled → **upscaled back to 100%**
   so the output file always matches the source video dimensions exactly
-- Timestamp overlay uses a **semi-transparent dark box** with white bold text,
-  rendered proportionally to the image width — legible at any resolution
+- Timestamp shown in the **bottom caption strip** of each polaroid cell, centred,
+  in the configurable `text_color`
 
 ---
 
@@ -137,13 +137,11 @@ Copy `ftp_polaroid_snapshot/` to `/config/addons/` then install from
 | `output_dir` | string | `"/media/polaroid"` | Root output directory |
 | `interval_minutes` | int (1–1440) | `5` | FTP poll interval |
 | `background_color` | hex | `"#FFFFFF"` | Polaroid border colour |
-| `text_color` | hex | `"#505050"` | *(reserved — not used in v1.5.0)* |
+| `text_color` | hex | `"#505050"` | Caption text colour in the bottom strip |
 | `keep_photos_days` | int (1–365) | `7` | Days to retain photo folders |
 | `keep_timelapse_days` | int (1–730) | `30` | Days to retain timelapse MP4s |
 
-> `text_color` is retained in the schema for forward compatibility but the
-> polaroid border no longer has a text caption strip — timestamp is burned
-> directly onto the photo.
+
 
 ### Example configuration
 
@@ -234,6 +232,11 @@ Open the add-on **Log** tab for full output.
 ---
 
 ## Changelog
+
+### v1.6.0
+- Timestamp moved back to the **bottom polaroid caption strip** (centred, no frame numbers)
+- Removed on-photo timestamp overlay entirely
+- `text_color` option is active again — controls the caption strip text colour
 
 ### v1.5.0
 - Timestamp only on photo — removed frame numbers and caption strip entirely
