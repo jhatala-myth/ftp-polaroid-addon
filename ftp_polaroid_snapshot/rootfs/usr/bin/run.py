@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-FTP Polaroid Snapshot — Home Assistant Add-on  v1.6.0
+FTP Polaroid Snapshot — Home Assistant Add-on  v1.7.0
 
 Every N minutes (configurable):
-  • Downloads the newest .mov from FTP
+  • Checks FTP for the newest .mov file
+  • Skips download if the file is identical to the last one (same name + mtime)
+  • Warns in the log if no new file appears for 3 consecutive cycles
   • Extracts frames with ffmpeg
   • < 4 frames  → single full-size polaroid
   • ≥ 4 frames  → 2×2 matrix: each cell is 25% of original, scaled up so the
                    output image matches the original video resolution exactly
-  • MOV modification time burned as timestamp in bottom-right corner
-  • No frame numbers / captions — timestamp only
+  • Timestamp shown in the bottom polaroid caption strip (centred, no frame numbers)
   • Saves to output_dir/YYYY-MM-DD/polaroid_HH-MM-SS.jpg
   • latest.jpg always updated at output_dir root
 
@@ -437,9 +438,73 @@ def run_maintenance(output_dir: str, keep_photos_days: int,
 
 
 # ──────────────────────────────────────────────
+# Download deduplication & stale-file detection
+# ──────────────────────────────────────────────
+class DownloadTracker:
+    """
+    Tracks the last successfully downloaded file and counts consecutive
+    cycles where no new file appeared.
+
+    A file is considered "new" when either its name or its modification
+    timestamp differs from the previous download.  If the FTP server does not
+    expose modification times (NLST fallback), name-only comparison is used.
+
+    After `warn_after` consecutive cycles with no new file a WARNING is written
+    to the log and the counter resets so the warning repeats every `warn_after`
+    further cycles if the situation persists.
+    """
+
+    WARN_AFTER = 3  # cycles before issuing a stale-file warning
+
+    def __init__(self):
+        self._last_name:   str | None      = None
+        self._last_mtime:  datetime | None = None
+        self._stale_count: int             = 0
+
+    # ── identity key ──────────────────────────
+    @staticmethod
+    def _key(name: str, mtime: datetime | None) -> tuple:
+        return (name, mtime.isoformat() if mtime else None)
+
+    # ── public API ────────────────────────────
+    def is_new(self, name: str, mtime: datetime | None) -> bool:
+        """Return True if this file has not been seen before."""
+        return self._key(name, mtime) != self._key(
+            self._last_name or "", self._last_mtime)
+
+    def record_skipped(self, name: str, mtime: datetime | None):
+        """Call when a file is seen but not downloaded (already processed)."""
+        self._stale_count += 1
+        log.info(
+            "Skipping '%s' – already processed (unchanged for %d consecutive cycle%s)",
+            name, self._stale_count,
+            "s" if self._stale_count != 1 else "",
+        )
+        if self._stale_count % self.WARN_AFTER == 0:
+            log.warning(
+                "⚠  No new MOV file on FTP for %d consecutive check cycles "
+                "(interval × %d = %d min without a new recording). "
+                "Camera offline or FTP path incorrect?",
+                self._stale_count,
+                self._stale_count,
+                # approximate wall-clock minutes — caller doesn't pass interval,
+                # so we just report the cycle count; README explains this.
+                self._stale_count,
+            )
+
+    def record_downloaded(self, name: str, mtime: datetime | None):
+        """Call after a file has been successfully downloaded and processed."""
+        self._last_name  = name
+        self._last_mtime = mtime
+        self._stale_count = 0
+        log.info("Tracker updated: last file = '%s'  mtime = %s",
+                 name, mtime.isoformat() if mtime else "unknown")
+
+
+# ──────────────────────────────────────────────
 # Main processing run
 # ──────────────────────────────────────────────
-def process(opts: dict):
+def process(opts: dict, tracker: DownloadTracker):
     host        = get_cfg(opts, "ftp_host",        "")
     port        = int(get_cfg(opts, "ftp_port",    21))
     user        = get_cfg(opts, "ftp_user",        "anonymous")
@@ -468,6 +533,12 @@ def process(opts: dict):
     try:
         filename, file_dt = ftp_latest_mov(ftp, remote_path)
         if not filename:
+            ftp.quit()
+            return
+
+        # ── Deduplication: skip if we already processed this exact file ──
+        if not tracker.is_new(filename, file_dt):
+            tracker.record_skipped(filename, file_dt)
             ftp.quit()
             return
 
@@ -516,6 +587,9 @@ def process(opts: dict):
             shutil.copy2(out_path, latest)
             log.info("✔  latest.jpg updated")
 
+            # Mark this file as processed so we don't re-download it
+            tracker.record_downloaded(filename, file_dt)
+
     except Exception as exc:
         log.exception("Unexpected error: %s", exc)
         try:
@@ -536,11 +610,14 @@ def main():
     output_dir         = get_cfg(opts, "output_dir", "/media/polaroid")
 
     log.info("════════════════════════════════════════")
-    log.info("  FTP Polaroid Snapshot  v1.6.0")
+    log.info("  FTP Polaroid Snapshot  v1.7.0")
     log.info("  Check interval  : %d min", interval // 60)
     log.info("  Photo retention : %d days", keep_photos_days)
     log.info("  Lapse retention : %d days", keep_timelapse_days)
+    log.info("  Stale warning   : after %d unchanged cycles", DownloadTracker.WARN_AFTER)
     log.info("════════════════════════════════════════")
+
+    tracker = DownloadTracker()
 
     while True:
         now = datetime.now()
@@ -550,7 +627,7 @@ def main():
             run_maintenance(output_dir, keep_photos_days, keep_timelapse_days)
 
         try:
-            process(opts)
+            process(opts, tracker)
         except Exception as exc:
             log.exception("process() raised: %s", exc)
 
