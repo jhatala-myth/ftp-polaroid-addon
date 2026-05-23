@@ -1,10 +1,10 @@
 name: "FTP Polaroid Snapshot"
 description: >
-  Fetches the latest MOV file from an FTP server, extracts frames,
-  and creates a polaroid-style image: a single photo when < 4 frames
-  are found, or a 2×2 matrix when >= 4 frames are found.
-  Background and text colours are fully configurable.
-version: "1.4.0"
+  Fetches the latest MOV from FTP, renders a polaroid-style image with a
+  burned-in timestamp, stores it in date-structured folders, builds a daily
+  H.264 timelapse MP4, and enforces separate retention periods for photos
+  and timelapse files.
+version: "1.5.0"
 slug: "ftp_polaroid_snapshot"
 init: false
 homeassistant_api: false
@@ -28,6 +28,8 @@ options:
   interval_minutes: 5
   background_color: "#FFFFFF"
   text_color: "#505050"
+  keep_photos_days: 7
+  keep_timelapse_days: 30
 schema:
   ftp_host: str
   ftp_port: int
@@ -38,3 +40,5 @@ schema:
   interval_minutes: int(1,1440)
   background_color: "match(^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$)"
   text_color: "match(^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$)"
+  keep_photos_days: int(1,365)
+  keep_timelapse_days: int(1,730)
