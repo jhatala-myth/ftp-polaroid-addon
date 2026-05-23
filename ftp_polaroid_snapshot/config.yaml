@@ -1,6 +1,10 @@
 name: "FTP Polaroid Snapshot"
-description: "Fetches the latest MOV file from an FTP server every 5 minutes, extracts frames, and creates a 2x2 polaroid-style contact sheet saved to /media."
-version: "1.0.0"
+description: >
+  Fetches the latest MOV file from an FTP server, extracts frames,
+  and creates a polaroid-style image: a single photo when < 4 frames
+  are found, or a 2×2 matrix when >= 4 frames are found.
+  Saves the result to /media/polaroid/. Check interval is configurable.
+version: "1.2.0"
 slug: "ftp_polaroid_snapshot"
 init: false
 homeassistant_api: false
@@ -29,4 +33,4 @@ schema:
   ftp_password: str
   ftp_path: str
   output_dir: str
-  interval_minutes: int
+  interval_minutes: int(1,1440)
