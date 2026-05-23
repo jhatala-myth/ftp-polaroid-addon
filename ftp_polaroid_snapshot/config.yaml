@@ -30,4 +30,3 @@ schema:
   ftp_path: str
   output_dir: str
   interval_minutes: int
-image: "ghcr.io/home-assistant/amd64-base-python:3.11"
