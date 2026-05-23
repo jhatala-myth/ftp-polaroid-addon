@@ -1,16 +1,39 @@
 # FTP Polaroid Snapshot — Home Assistant Add-on
 
-**v1.3.0**
+**v1.4.0**
 
 Polls an FTP server on a configurable schedule (default every 5 minutes),
-downloads the newest `.mov` file, extracts every frame with ffmpeg, and
-renders a polaroid-style JPEG saved under `/media/polaroid/`.
+downloads the newest `.mov` file, extracts frames with ffmpeg, and renders
+a polaroid-style JPEG saved under `/media/polaroid/`.
 
+### Key features
+
+- **MOV file timestamp** — the modification time of the video file (read from
+  the FTP server via MLSD) is burned directly onto every frame image in the
+  bottom-right corner. This means the timestamp reflects *when the recording
+  was made*, not when the add-on ran.
 - **< 4 frames** → single polaroid from the middle frame
 - **≥ 4 frames** → 2 × 2 polaroid matrix (first frame of each quarter)
-- Each cell is scaled to **25 % of the original video resolution**
-- **2 px separator** between cells in matrix mode
-- Fully configurable **background colour** and **caption text colour**
+- Each cell scaled to **25 % of the original video resolution**
+- **2 px separator** between matrix cells
+- Configurable **background colour** and **caption text colour**
+
+---
+
+## How the timestamp works
+
+The timestamp shown on each image is taken from the FTP `MLSD` `modify` fact —
+the server-side modification time of the `.mov` file — formatted as:
+
+```
+2024-03-15  09:42:17 UTC
+```
+
+The timestamp is rendered as a **semi-transparent dark overlay in the
+bottom-right corner** of each frame so it remains legible on any background.
+
+If the FTP server does not support `MLSD` (falls back to `NLST`), the current
+UTC time is used instead and the label is suffixed with `(approx)`.
 
 ---
 
@@ -20,20 +43,21 @@ renders a polaroid-style JPEG saved under `/media/polaroid/`.
 total_frames = 120
 group_size   = 120 // 4 = 30
 
-chosen frames:
+Matrix mode (≥ 4 frames):
   Group 1 → index   0   (frame_000001.png)
   Group 2 → index  30   (frame_000031.png)
   Group 3 → index  60   (frame_000061.png)
   Group 4 → index  90   (frame_000091.png)
 
-total_frames = 2  →  single mode, middle frame (index 1)
+Single mode (< 4 frames):
+  total_frames = 2  →  middle frame (index 1)
 ```
 
 ---
 
 ## Repository structure
 
-For Home Assistant to discover the add-on, your GitHub repository **must**
+For Home Assistant to discover the add-on your GitHub repository **must**
 follow this layout:
 
 ```
@@ -79,11 +103,14 @@ Then go to **Settings → Add-ons → Local add-ons** and install from there.
 | `output_dir` | string | `"/media/polaroid"` | Where output images are saved |
 | `interval_minutes` | int (1–1440) | `5` | How often to check the FTP server |
 | `background_color` | hex string | `"#FFFFFF"` | Polaroid border and separator colour |
-| `text_color` | hex string | `"#505050"` | Caption text colour |
+| `text_color` | hex string | `"#505050"` | Caption text colour below each frame |
 
 Colours accept standard CSS hex notation — `#RRGGBB` or shorthand `#RGB`.
-HA validates the format at save time; an invalid value is rejected before the
-add-on starts.
+HA validates the format at save time.
+
+> **Note:** `text_color` controls only the caption strip below each polaroid.
+> The timestamp overlay burned onto the photo itself always uses white text on
+> a semi-transparent dark background for maximum legibility.
 
 ### Example configuration
 
@@ -131,17 +158,7 @@ type: picture
 image: /media/polaroid/latest.jpg
 ```
 
-### Auto-refresh with browser_mod
-
-```yaml
-type: picture
-image: /media/polaroid/latest.jpg
-tap_action:
-  action: none
-```
-
-Add a **browser_mod** automation to reload the card every N minutes, or
-set the interval to match `interval_minutes`:
+### With auto-refresh
 
 ```yaml
 type: picture
@@ -155,29 +172,37 @@ refresh_interval: 300   # seconds — requires Picture Entity Card
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Add-on not visible in store | Wrong repo structure | Ensure `repository.yaml` is at the root and the add-on is in a subdirectory |
-| `FTP connection failed` | Network / credentials | Check host, port, and credentials; confirm HA can reach the FTP server |
+| Add-on not visible in store | Wrong repo structure | Ensure `repository.yaml` is at the repo root and the add-on is in a subdirectory |
+| `FTP connection failed` | Network or credentials | Check host, port, credentials; confirm HA can reach the FTP server |
 | `No .mov files found` | Wrong path or extension | Verify `ftp_path`; filenames must end in `.mov` (case-insensitive) |
-| `No frames extracted` | Corrupt or incomplete file | The camera may still be writing; check the ffmpeg log lines |
-| Single image instead of matrix | Fewer than 4 frames extracted | Short clips produce a single polaroid — this is expected behaviour |
-| Invalid colour rejected | Bad hex string | Use `#RRGGBB` format, e.g. `#FF8800`; no spaces or other characters |
-| Image looks blank / all black | All-black video frames | Inspect the archived `polaroid_*.jpg` files to confirm |
+| `No frames extracted` | Corrupt or incomplete file | Camera may still be writing; check ffmpeg lines in the log |
+| Timestamp shows `(approx)` | FTP server doesn't support MLSD | Current UTC time is used as fallback — no action needed |
+| Single image instead of matrix | Fewer than 4 frames | Short clips produce a single polaroid — expected behaviour |
+| Invalid colour rejected by HA | Bad hex string | Use `#RRGGBB` format, e.g. `#FF8800`; no spaces |
+| Image looks blank / all black | All-black video frames | Inspect the archived `polaroid_*.jpg` files |
 
-Open the add-on **Log** tab in HA for full output including colour values,
-frame counts, thumb dimensions, and output file paths.
+Open the add-on **Log** tab in HA for full output including the timestamp
+value, frame counts, thumb dimensions, colour values, and output file paths.
 
 ---
 
 ## Changelog
 
+### v1.4.0
+- Timestamp is now sourced from the MOV file's FTP modification time (MLSD
+  `modify` field) rather than the current wall clock
+- Timestamp is burned directly onto each frame image (bottom-right corner,
+  semi-transparent dark overlay with white text) in addition to the caption strip
+- Falls back to current UTC time (labelled `approx`) if MLSD is unavailable
+
 ### v1.3.0
-- Added `background_color` option — controls polaroid border and matrix separator colour
-- Added `text_color` option — controls caption text colour
-- Hex colour values validated by HA schema at save time; parse errors fall back gracefully
+- Added `background_color` option — polaroid border and matrix separator colour
+- Added `text_color` option — caption strip text colour
+- Hex colours validated by HA schema at save time; parse errors fall back gracefully
 
 ### v1.2.0
-- Smart rendering mode: single polaroid when < 4 frames, 2×2 matrix when ≥ 4 frames
-- `interval_minutes` now configurable (1–1440); validated by HA schema
+- Smart rendering: single polaroid when < 4 frames, 2×2 matrix when ≥ 4 frames
+- `interval_minutes` now configurable (1–1440), validated by HA schema
 
 ### v1.1.0
 - Fixed repository structure so the add-on is discoverable by the HA store

@@ -4,7 +4,7 @@ description: >
   and creates a polaroid-style image: a single photo when < 4 frames
   are found, or a 2×2 matrix when >= 4 frames are found.
   Background and text colours are fully configurable.
-version: "1.3.0"
+version: "1.4.0"
 slug: "ftp_polaroid_snapshot"
 init: false
 homeassistant_api: false
