@@ -1,6 +1,6 @@
 # FTP Polaroid Snapshot — Home Assistant Add-on
 
-**v1.6.0**
+**v1.8.0**
 
 Polls an FTP server on a configurable schedule, downloads the newest `.mov`
 file, renders a polaroid-style snapshot with a burned-in MOV timestamp, and
@@ -27,11 +27,17 @@ periods control how long photos and timelapse files are kept.
 7. Save to `output_dir/YYYY-MM-DD/polaroid_HH-MM-SS.jpg`
 8. Overwrite `output_dir/latest.jpg` for dashboard use
 
-### Once per day (00:00–00:05)
-1. Build an H.264 timelapse MP4 from all JPEGs in yesterday's folder
-2. Save to `output_dir/timelapse/YYYY-MM-DD-timelapse.mp4`
+### Once per calendar day (first cycle after midnight)
+1. Check whether yesterday's timelapse MP4 already exists on disk
+2. If it does **not** exist and yesterday's photo folder is present → build the timelapse
 3. Delete photo folders older than `keep_photos_days` full days
 4. Delete timelapse files older than `keep_timelapse_days` full days
+
+Maintenance runs on the **first check cycle of each new calendar day**, not in
+a fixed midnight window. A restart at any hour (e.g. 03:00) will trigger
+maintenance immediately for the previous day rather than waiting until the
+next midnight. The timelapse existence check prevents duplicate builds if the
+add-on is restarted multiple times in the same day.
 
 ---
 
@@ -194,7 +200,8 @@ timelapse** in the HA Media Browser.
 - Pixel format: `yuv420p` (maximum compatibility)
 - FPS: 10 frames per second (one snapshot every 0.1 s of playback)
 - Dimensions forced to even numbers for H.264 compatibility
-- Built once per day in the 00:00–00:05 window
+- Built once per calendar day on the first check cycle after midnight
+- Skipped if the MP4 for that date already exists (safe across restarts)
 
 Example: 288 snapshots (5-minute interval over 24 h) → ~29 seconds of video.
 
@@ -225,13 +232,27 @@ recommended for long-running installations).
 | Timestamp shows `(approx)` | FTP doesn't support MLSD | Current UTC used as fallback — no action needed |
 | Single image instead of matrix | Video has < 4 frames | Expected — short clips use single mode |
 | No timelapse built | No photos in yesterday's folder | Add-on may not have run that day; check logs |
-| Old folders not deleted | `keep_photos_days` too large | Lower the value; deletion runs just after midnight |
+| Old folders not deleted | `keep_photos_days` too large | Lower the value; deletion runs on first cycle of each new day |
 
 Open the add-on **Log** tab for full output.
 
 ---
 
 ## Changelog
+
+### v1.8.0
+- Daily maintenance now runs on the **first check cycle after midnight** rather
+  than only within a fixed 00:00–00:05 window — a restart at any hour triggers
+  it immediately for the previous day
+- Timelapse existence check: if `YYYY-MM-DD-timelapse.mp4` already exists on
+  disk the build step is skipped, preventing duplicate work on restarts
+
+### v1.7.0
+- Added download deduplication: skips processing when the newest FTP file is
+  identical to the last downloaded one (same filename and modification time)
+- Added stale-file warning: after 3 consecutive cycles with no new file a
+  `WARNING` is written to the log; repeats every 3 further stale cycles
+- `text_color` option re-activated — controls the caption strip text colour
 
 ### v1.6.0
 - Timestamp moved back to the **bottom polaroid caption strip** (centred, no frame numbers)
