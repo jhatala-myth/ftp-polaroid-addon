@@ -4,7 +4,7 @@ description: >
   burned-in timestamp, stores it in date-structured folders, builds a daily
   H.264 timelapse MP4, and enforces separate retention periods for photos
   and timelapse files.
-version: "1.8.0"
+version: "1.9.0"
 slug: "ftp_polaroid_snapshot"
 init: false
 homeassistant_api: false
@@ -30,6 +30,7 @@ options:
   text_color: "#505050"
   keep_photos_days: 7
   keep_timelapse_days: 30
+  timelapse_frame_duration: 0.5
 schema:
   ftp_host: str
   ftp_port: int
@@ -42,3 +43,4 @@ schema:
   text_color: "match(^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$)"
   keep_photos_days: int(1,365)
   keep_timelapse_days: int(1,730)
+  timelapse_frame_duration: float(0.1,10.0)

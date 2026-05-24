@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FTP Polaroid Snapshot — Home Assistant Add-on  v1.8.0
+FTP Polaroid Snapshot — Home Assistant Add-on  v1.9.0
 
 Every N minutes (configurable):
   • Checks FTP for the newest .mov file
@@ -319,9 +319,11 @@ def timelapse_dir(output_dir: str) -> str:
 # ──────────────────────────────────────────────
 # Timelapse builder
 # ──────────────────────────────────────────────
-def build_timelapse(photo_dir: str, out_mp4: str, fps: int = 10) -> bool:
+def build_timelapse(photo_dir: str, out_mp4: str,
+                    frame_duration_sec: float = 0.5) -> bool:
     """
     Build an H.264 MP4 from all JPEGs in photo_dir (sorted by name).
+    frame_duration_sec controls how long each image is shown (default 0.5 s).
     Returns True on success.
     """
     jpegs = sorted(Path(photo_dir).glob("*.jpg"))
@@ -329,15 +331,16 @@ def build_timelapse(photo_dir: str, out_mp4: str, fps: int = 10) -> bool:
         log.warning("No JPEGs in %s – skipping timelapse", photo_dir)
         return False
 
-    log.info("Building timelapse from %d images in %s …", len(jpegs), photo_dir)
+    log.info("Building timelapse: %d images × %.2f s/frame → ~%.1f s total",
+             len(jpegs), frame_duration_sec, len(jpegs) * frame_duration_sec)
 
     with tempfile.TemporaryDirectory(prefix="timelapse_") as tmp:
-        # Write an ffmpeg concat file
+        # Write an ffmpeg concat file — each entry sets its own display duration
         list_file = os.path.join(tmp, "frames.txt")
         with open(list_file, "w") as f:
             for jp in jpegs:
                 f.write(f"file '{jp}'\n")
-                f.write(f"duration {1 / fps}\n")
+                f.write(f"duration {frame_duration_sec:.6f}\n")
             # ffmpeg concat demuxer needs a final duration-less entry
             f.write(f"file '{jpegs[-1]}'\n")
 
@@ -414,7 +417,7 @@ def timelapse_exists(output_dir: str, for_date: date) -> bool:
 
 
 def run_maintenance(output_dir: str, keep_photos_days: int,
-                    keep_timelapse_days: int):
+                    keep_timelapse_days: int, frame_duration_sec: float):
     """
     Run once per calendar day, on the first check cycle after midnight.
 
@@ -444,7 +447,7 @@ def run_maintenance(output_dir: str, keep_photos_days: int,
     if timelapse_exists(output_dir, yesterday):
         log.info("Timelapse for %s already exists – skipping build", yesterday_str)
     elif os.path.isdir(photo_dir):
-        build_timelapse(photo_dir, mp4_path)
+        build_timelapse(photo_dir, mp4_path, frame_duration_sec)
     else:
         log.info("No photo folder found for %s – no timelapse to build", yesterday_str)
 
@@ -620,16 +623,18 @@ def process(opts: dict, tracker: DownloadTracker):
 def main():
     opts = load_options()
 
-    interval           = int(get_cfg(opts, "interval_minutes",    5))  * 60
-    keep_photos_days   = int(get_cfg(opts, "keep_photos_days",    7))
-    keep_timelapse_days= int(get_cfg(opts, "keep_timelapse_days", 30))
-    output_dir         = get_cfg(opts, "output_dir", "/media/polaroid")
+    interval            = int(get_cfg(opts, "interval_minutes",       5))  * 60
+    keep_photos_days    = int(get_cfg(opts, "keep_photos_days",        7))
+    keep_timelapse_days = int(get_cfg(opts, "keep_timelapse_days",    30))
+    frame_duration_sec  = float(get_cfg(opts, "timelapse_frame_duration", 0.5))
+    output_dir          = get_cfg(opts, "output_dir", "/media/polaroid")
 
     log.info("════════════════════════════════════════")
-    log.info("  FTP Polaroid Snapshot  v1.8.0")
+    log.info("  FTP Polaroid Snapshot  v1.9.0")
     log.info("  Check interval  : %d min", interval // 60)
     log.info("  Photo retention : %d days", keep_photos_days)
     log.info("  Lapse retention : %d days", keep_timelapse_days)
+    log.info("  Lapse frame dur : %.2f s/frame", frame_duration_sec)
     log.info("  Stale warning   : after %d unchanged cycles", DownloadTracker.WARN_AFTER)
     log.info("════════════════════════════════════════")
 
@@ -639,7 +644,8 @@ def main():
         # Run daily maintenance on the first cycle of each new calendar day.
         # The guard inside run_maintenance ensures it executes only once per day
         # regardless of what time the add-on started or restarted.
-        run_maintenance(output_dir, keep_photos_days, keep_timelapse_days)
+        run_maintenance(output_dir, keep_photos_days, keep_timelapse_days,
+                        frame_duration_sec)
 
         try:
             process(opts, tracker)

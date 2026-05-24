@@ -1,6 +1,6 @@
 # FTP Polaroid Snapshot — Home Assistant Add-on
 
-**v1.8.0**
+**v1.9.0**
 
 Polls an FTP server on a configurable schedule, downloads the newest `.mov`
 file, renders a polaroid-style snapshot with a burned-in MOV timestamp, and
@@ -146,6 +146,7 @@ Copy `ftp_polaroid_snapshot/` to `/config/addons/` then install from
 | `text_color` | hex | `"#505050"` | Caption text colour in the bottom strip |
 | `keep_photos_days` | int (1–365) | `7` | Days to retain photo folders |
 | `keep_timelapse_days` | int (1–730) | `30` | Days to retain timelapse MP4s |
+| `timelapse_frame_duration` | float (0.1–10.0) | `0.5` | Seconds each photo is shown in the timelapse |
 
 
 
@@ -162,6 +163,7 @@ interval_minutes: 5
 background_color: "#FFFFFF"
 keep_photos_days: 7
 keep_timelapse_days: 30
+timelapse_frame_duration: 0.5
 ```
 
 ### Background colour presets
@@ -198,12 +200,14 @@ timelapse** in the HA Media Browser.
 - Source: all `polaroid_*.jpg` files in yesterday's date folder, sorted by name
 - Codec: **H.264 (libx264)**, CRF 18 (high quality), `slow` preset
 - Pixel format: `yuv420p` (maximum compatibility)
-- FPS: 10 frames per second (one snapshot every 0.1 s of playback)
+- Frame duration: configurable via `timelapse_frame_duration` (default 0.5 s per image)
+- Effective playback speed: `1 / frame_duration` fps (default = 2 fps)
 - Dimensions forced to even numbers for H.264 compatibility
 - Built once per calendar day on the first check cycle after midnight
 - Skipped if the MP4 for that date already exists (safe across restarts)
 
-Example: 288 snapshots (5-minute interval over 24 h) → ~29 seconds of video.
+Example: 288 snapshots (5-minute interval over 24 h) at 0.5 s/frame → ~144 s (~2.4 min) of video.
+At 1.0 s/frame the same 288 snapshots produce ~288 s (~4.8 min).
 
 ---
 
@@ -239,6 +243,11 @@ Open the add-on **Log** tab for full output.
 ---
 
 ## Changelog
+
+### v1.9.0
+- Added `timelapse_frame_duration` option: configurable seconds per frame
+  (default 0.5 s, range 0.1–10.0 s) replacing the fixed 10 fps hardcode
+- Duration logged at build time: `N images × X.XX s/frame → ~Y.Y s total`
 
 ### v1.8.0
 - Daily maintenance now runs on the **first check cycle after midnight** rather
